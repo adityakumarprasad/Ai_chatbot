@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import Sidebar from "@/components/Sidebar";
 import ChatWindow, { Message, ToolExecution } from "@/components/ChatWindow";
 
-const BACKEND_URL = "http://localhost:8000";
+const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function Home() {
   const [threads, setThreads] = useState<string[]>([]);
