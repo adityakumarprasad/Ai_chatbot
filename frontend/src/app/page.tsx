@@ -16,6 +16,14 @@ export default function Home() {
   const [streamingMessage, setStreamingMessage] = useState<string>("");
   const [isSending, setIsSending] = useState<boolean>(false);
 
+  // RAG document states
+  const [activeDoc, setActiveDoc] = useState<{
+    files: { filename: string; documents: number; chunks: number }[];
+    total_documents: number;
+    total_chunks: number;
+  } | null>(null);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+
   // 1. Fetch thread history from Postgres via FastAPI
   const loadHistory = useCallback(async (threadId: string) => {
     try {
@@ -28,6 +36,23 @@ export default function Home() {
       }
     } catch (err) {
       console.error("Network error loading thread history:", err);
+    }
+  }, []);
+
+  // Fetch active document metadata for the thread
+  const loadActiveDocument = useCallback(async (threadId: string) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/threads/${threadId}/document`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.has_document) {
+          setActiveDoc(data.metadata);
+        } else {
+          setActiveDoc(null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load active document:", err);
     }
   }, []);
 
@@ -48,14 +73,16 @@ export default function Home() {
     fetchThreads();
   }, [fetchThreads]);
 
-  // Load history whenever activeThreadId changes
+  // Load history and document metadata whenever activeThreadId changes
   useEffect(() => {
     if (activeThreadId) {
       loadHistory(activeThreadId);
+      loadActiveDocument(activeThreadId);
     } else {
       setMessages([]);
+      setActiveDoc(null);
     }
-  }, [activeThreadId, loadHistory]);
+  }, [activeThreadId, loadHistory, loadActiveDocument]);
 
   // 3. Create a new thread ID
   const handleCreateThread = async () => {
@@ -71,6 +98,46 @@ export default function Home() {
       }
     } catch (err) {
       console.error("Failed to create new thread:", err);
+    }
+  };
+
+  // Upload PDF file to backend RAG parser
+  const handleUploadFile = async (file: File) => {
+    if (!activeThreadId) return;
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/threads/${activeThreadId}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setActiveDoc(data.metadata);
+        
+        // Notify the user locally about successful upload
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `📄 Ingested document "${data.metadata.filename}" (${data.metadata.documents} pages, ${data.metadata.chunks} chunks) successfully. You can now ask queries about this file.`,
+          },
+        ]);
+        
+        // Force state reload to bind system instructions
+        await loadHistory(activeThreadId);
+      } else {
+        const err = await response.json();
+        alert(`Ingestion failed: ${err.detail || "Unknown error"}`);
+      }
+    } catch (err) {
+      console.error("Upload error:", err);
+      alert("Failed to upload document due to network issues.");
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -208,6 +275,9 @@ export default function Home() {
         streamingMessage={streamingMessage}
         isSending={isSending}
         onSendMessage={handleSendMessage}
+        activeDoc={activeDoc}
+        onUploadFile={handleUploadFile}
+        isUploading={isUploading}
       />
     </main>
   );

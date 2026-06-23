@@ -13,3 +13,7 @@ sse-starlette>=2.0.0
 langsmith>=0.1.0
 pydantic-settings>=2.2.1
 pydantic>=2.6.4
+langgraph-checkpoint-postgres>=2.0.0
+ddgs>=9.0.0
+pypdf>=4.0.0
+faiss-cpu>=1.7.4

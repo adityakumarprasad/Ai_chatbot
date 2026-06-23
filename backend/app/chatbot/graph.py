@@ -14,13 +14,31 @@ def compile_chatbot(checkpointer, mcp_tools=None):
         mcp_tools = []
 
     # 1. Bind local tools and MCP tools to the Gemini LLM
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
     all_tools = get_base_tools() + mcp_tools
     llm_with_tools = llm.bind_tools(all_tools) if all_tools else llm
 
     # 2. Define the main chat node
-    async def chat_node(state: ChatState):
+    async def chat_node(state: ChatState, config = None):
         messages = []
+        
+        # Extract active thread_id from the graph runner configuration
+        thread_id = None
+        if config and isinstance(config, dict):
+            thread_id = config.get("configurable", {}).get("thread_id")
+
+        # Inject system message telling the AI how to use rag_tool with the thread_id
+        system_content = (
+            "You are a helpful assistant. For questions about the uploaded PDF, call "
+            "the `rag_tool` and include the thread_id "
+            f"`{thread_id}`. You can also use the web search, stock price, and "
+            "calculator tools when helpful. If no document is available, ask the user "
+            "to upload a PDF."
+        )
+        messages.append({
+            "role": "system",
+            "content": system_content
+        })
         
         # Inject existing summary if present
         summary = state.get("summary", "")
@@ -31,7 +49,7 @@ def compile_chatbot(checkpointer, mcp_tools=None):
             })
             
         messages.extend(state["messages"])
-        response = await llm_with_tools.ainvoke(messages)
+        response = await llm_with_tools.ainvoke(messages, config=config)
         return {"messages": [response]}
 
     # 3. Setup StateGraph

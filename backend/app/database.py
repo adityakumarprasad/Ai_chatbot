@@ -13,7 +13,8 @@ def get_db_pool() -> AsyncConnectionPool:
         db_pool = AsyncConnectionPool(
             conninfo=settings.DATABASE_URL,
             max_size=10,
-            open=False  # Do not open synchronously on load
+            open=False,  # Do not open synchronously on load
+            kwargs={"autocommit": True}
         )
     return db_pool
 

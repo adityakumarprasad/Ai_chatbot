@@ -3,7 +3,7 @@ import uuid
 import json
 from pathlib import Path
 from contextlib import asynccontextmanager, AsyncExitStack
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
@@ -14,6 +14,24 @@ from backend.app.config import settings
 from backend.app.database import get_db_pool, init_checkpointer, close_db_pool
 from backend.app.schemas import ChatRequest, ThreadCreateResponse, ThreadListResponse, HistoryResponse, MessageResponse
 from backend.app.chatbot.graph import compile_chatbot
+from backend.app.chatbot.rag import ingest_pdf, thread_has_document, thread_document_metadata
+
+def extract_text_content(content) -> str:
+    """Helper to extract raw text content from standard strings or structured Gemini parts lists."""
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if isinstance(part, str):
+                text_parts.append(part)
+            elif isinstance(part, dict):
+                if "text" in part:
+                    text_parts.append(part["text"])
+                elif part.get("type") == "text" and "text" in part:
+                    text_parts.append(part["text"])
+        return "".join(text_parts)
+    return str(content) if content is not None else ""
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -46,8 +64,6 @@ async def lifespan(app: FastAPI):
             }
         })
         
-        # Enter the client async context, starting the subprocess
-        await app.state.exit_stack.enter_async_context(mcp_client)
         print("Connected to GitHub MCP server.")
 
         # Retrieve tools from MCP server
@@ -139,7 +155,7 @@ async def get_thread_history(thread_id: str):
             
             # Map name if present (useful for tool calls)
             name = getattr(m, "name", None)
-            formatted.append(MessageResponse(role=role, content=str(m.content), name=name))
+            formatted.append(MessageResponse(role=role, content=extract_text_content(m.content), name=name))
             
         return {"messages": formatted}
     except Exception as e:
@@ -147,6 +163,35 @@ async def get_thread_history(thread_id: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load history: {str(e)}"
         )
+
+@app.post("/api/threads/{thread_id}/upload")
+async def upload_pdf(thread_id: str, file: UploadFile = File(...)):
+    """Ingest a PDF document for RAG search on the specified thread."""
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF file uploads are supported."
+        )
+    
+    try:
+        file_bytes = await file.read()
+        metadata = ingest_pdf(file_bytes, thread_id, file.filename)
+        return {"status": "success", "metadata": metadata}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ingestion failed: {str(e)}"
+        )
+
+@app.get("/api/threads/{thread_id}/document")
+async def get_thread_document(thread_id: str):
+    """Retrieve details of the active document uploaded to this thread, if any."""
+    has_doc = thread_has_document(thread_id)
+    if not has_doc:
+        return {"has_document": False}
+    
+    metadata = thread_document_metadata(thread_id)
+    return {"has_document": True, "metadata": metadata}
 
 @app.post("/api/chat")
 async def chat(request_data: ChatRequest):
@@ -181,7 +226,7 @@ async def chat(request_data: ChatRequest):
                         "event": "tool",
                         "data": json.dumps({
                             "name": getattr(message_chunk, "name", "tool"),
-                            "content": str(message_chunk.content),
+                            "content": extract_text_content(message_chunk.content),
                             "status": "complete"
                         })
                     }
@@ -202,7 +247,7 @@ async def chat(request_data: ChatRequest):
                         yield {
                             "event": "message",
                             "data": json.dumps({
-                                "content": str(message_chunk.content)
+                                "content": extract_text_content(message_chunk.content)
                             })
                         }
         except Exception as e:
