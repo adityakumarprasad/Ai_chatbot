@@ -99,7 +99,7 @@ app = FastAPI(title="AI Chat Space Backend", lifespan=lifespan)
 # Enable CORS for Next.js frontend calls
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=["https://ai-chatbot-nine-blush-vdjzd2nj28.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
